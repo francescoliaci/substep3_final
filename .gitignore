@@ -36,6 +36,7 @@ activity_idx_step_idx.csv
 # Numpy / Torch artifacts
 # =========================
 *.npz
+*.npy
 *.pt
 *.pth
 
