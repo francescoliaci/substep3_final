@@ -2,6 +2,8 @@
 # Substep 3 – Task-Graph Encoding + Step Matching (FIXED)
 # Compatible with sliding-window Substep 1 output
 # ============================================================
+import sys
+sys.path.append("/content")
 
 import os
 import json
@@ -47,7 +49,7 @@ id_to_recipe = (
 # LOAD EGOVLP TEXT ENCODER
 # ------------------------------------------------------------
 
-from model.model import FrozenInTime
+from EgoVLP.model.model import FrozenInTime
 
 text_params = {
     "model": "distilbert-base-uncased",
