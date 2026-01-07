@@ -23,7 +23,7 @@ from transformers import DistilBertTokenizer
 FINAL_FEATURES_PATH = "/content/drive/MyDrive/AMLproject/output_subtask_1.npy"
 GRAPH_DIR           = "/content/drive/MyDrive/AMLproject/task_graphs"
 CSV_PATH            = "/content/drive/MyDrive/AMLproject/activity_idx_step_idx.csv"
-OUTPUT_DIR          = "/content/drive/MyDrive/AMLproject/graph_realizations"
+OUTPUT_DIR          = "/content/drive/MyDrive/AMLproject/graph_realizations_2"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
