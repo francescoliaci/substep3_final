@@ -1,0 +1,45 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+ENV/
+.ipynb_checkpoints/
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+.idea/
+.vscode/
+
+# =========================
+# Large data / outputs
+# =========================
+features_output/
+step_embeddings/
+graph_realizations/
+actionformer/
+
+# =========================
+# Dataset files
+# =========================
+task_graphs/
+activity_idx_step_idx.csv
+
+# =========================
+# Numpy / Torch artifacts
+# =========================
+*.npz
+*.pt
+*.pth
+
+# =========================
+# Logs / temp
+# =========================
+*.log
