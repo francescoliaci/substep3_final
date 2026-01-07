@@ -50,6 +50,7 @@ id_to_recipe = (
 # ------------------------------------------------------------
 
 from EgoVLP.model.model import FrozenInTime
+# from EgoVLP.base.base_model import BaseModel (in model.py)
 
 text_params = {
     "model": "distilbert-base-uncased",
