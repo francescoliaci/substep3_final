@@ -13,6 +13,8 @@
 # 6) Fuses matched node features with their matched visual features
 # 7) Saves a realized graph per video as .npz (ready for Substep 4)
 # ============================================================
+import sys 
+sys.path.append("/content")
 
 import os
 import sys
@@ -76,9 +78,8 @@ id_to_recipe = (
 # LOAD EGOVLP TEXT ENCODER (FrozenInTime)
 # ------------------------------------------------------------
 
-sys.path.append(EGOVLP_REPO_PATH)
-
-from model.model import FrozenInTime  # from EgoVLP repo
+from EgoVLP.model.model import FrozenInTime 
+# from EgoVLP.base.base_model import BaseModel (in model.py)
 
 # NOTE: We are using DistilBERT because FrozenInTime (EgoVLP) supports it.
 text_params = {
