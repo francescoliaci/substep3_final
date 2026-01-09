@@ -267,9 +267,15 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     idx_to_id = {idx: node_id for idx, node_id in enumerate(node_ids_int)}
     # remap edges
     edges_remapped = [
-        [id_to_idx[u], id_to_idx[v]]
+        [id_to_idx[int(u)], id_to_idx[int(v)]]
         for u, v in graph["edges"]
     ]
+    # sanity check
+    num_nodes = len(node_ids_int)
+    if len(edges_remapped) > 0:
+        m = np.max(edges_remapped)
+        if m >= num_nodes:
+            raise ValueError(f"Bad remap: max edge idx {m} >= num_nodes {num_nodes} for {video_id}")
 
     # --------------------------------------------------------
     # TEXT ENCODING (TASK GRAPH NODES) -> (num_nodes, 256)
