@@ -14,7 +14,13 @@
 # 7) Saves a realized graph per video as .npz (ready for Substep 4)
 # ============================================================
 import sys 
-sys.path.append("/content")
+# EgoVLP repo path (so we can import FrozenInTime)
+# Example:
+#   /content/EgoVLP/
+#       model/model.py
+# If your folder name differs, update accordingly.
+EGOVLP_REPO_PATH = "/content/EgoVLP-main"
+sys.path.append(EGOVLP_REPO_PATH)
 
 import os
 import sys
@@ -41,13 +47,6 @@ GRAPH_DIR           = "/content/drive/MyDrive/AMLproject/task_graphs"
 CSV_PATH            = "/content/drive/MyDrive/AMLproject/activity_idx_step_idx.csv"
 OUTPUT_DIR          = "/content/drive/MyDrive/AMLproject/graph_realizations_2"
 EGOVLP_CKPT         = "/content/drive/MyDrive/AMLproject/pretrained/EgoVLP_PT_BEST.pth"
-
-# EgoVLP repo path (so we can import FrozenInTime)
-# Example:
-#   /content/EgoVLP/
-#       model/model.py
-# If your folder name differs, update accordingly.
-EGOVLP_REPO_PATH    = "/content/EgoVLP"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -79,7 +78,7 @@ id_to_recipe = (
 # LOAD EGOVLP TEXT ENCODER (FrozenInTime)
 # ------------------------------------------------------------
 
-from EgoVLP.model.model import FrozenInTime 
+from model.model import FrozenInTime
 # from EgoVLP.base.base_model import BaseModel (in model.py)
 
 # NOTE: We are using DistilBERT because FrozenInTime (EgoVLP) supports it
@@ -280,7 +279,6 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     # VISUAL STEP EMBEDDINGS
     # step_feats is a list of (1792,) numpy arrays.
     # We stack -> (num_steps, 1792)
-    # Project -> (num_steps, 256)
     # Normalize -> cosine similarity space
     # --------------------------------------------------------
     V_np = np.stack(step_feats).astype(np.float32)  # (S, VISUAL_DIM)
