@@ -258,6 +258,20 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     node_texts = [graph["steps"][i] for i in node_ids]
 
     # --------------------------------------------------------
+    # MAP ORIGINAL NODE IDS -> COMPACT INDICES (0..N-1)
+    # --------------------------------------------------------
+
+    node_ids_int = [int(i) for i in node_ids]
+
+    id_to_idx = {node_id: idx for idx, node_id in enumerate(node_ids_int)}
+    idx_to_id = {idx: node_id for idx, node_id in enumerate(node_ids_int)}
+    # remap edges
+    edges_remapped = [
+        [id_to_idx[u], id_to_idx[v]]
+        for u, v in graph["edges"]
+    ]
+
+    # --------------------------------------------------------
     # TEXT ENCODING (TASK GRAPH NODES) -> (num_nodes, 256)
     # --------------------------------------------------------
     T = encode_text(node_texts)
@@ -302,13 +316,19 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
 
     np.savez(
         out_path,
-        node_features=node_features.detach().cpu().numpy(),  # (num_nodes, 256)
-        edges=np.array(graph["edges"]),
+        # node features aligned with indices 0..N-1
+        node_features=node_features.detach().cpu().numpy(),  # (N, 256)
+        # edges now use compact indices
+        edges=np.array(edges_remapped, dtype=np.int32),
+        # text aligned with node_features
         node_texts=np.array(node_texts, dtype=object),
+        # hungarian output already uses compact indices (OK)
         matched_pairs=np.array(list(zip(row_ind, col_ind)), dtype=np.int32),
-        # Optional debugging: store times for each visual step in same order
-        step_times=np.array(video_to_times[video_id], dtype=object)
-    )
+        # optional but useful
+        step_times=np.array(video_to_times[video_id], dtype=object),
+        # DEBUG 
+        original_node_ids=np.array(node_ids_int, dtype=np.int32)
+    )   
 
     saved_count += 1
 
