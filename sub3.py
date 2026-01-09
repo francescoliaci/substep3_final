@@ -7,8 +7,8 @@
 # What it does:
 # 1) Loads the dict of pseudo-step embeddings (sliding windows)
 # 2) Groups them per video_id
-# 3) Encodes task-graph node texts using EgoVLP text encoder (256-D)
-# 4) Projects visual step embeddings (1792-D) -> EgoVLP space (256-D)
+# 3) Encodes task-graph node texts using EgoVLP text encoder (1792-D)
+# 4) Visual step embeddings are already 1792-D (EgoVLP-aligned) 
 # 5) Runs Hungarian matching (1-to-1) between visual steps and graph nodes
 # 6) Fuses matched node features with their matched visual features
 # 7) Saves a realized graph per video as .npz (ready for Substep 4)
@@ -40,6 +40,7 @@ FINAL_FEATURES_PATH = "/content/drive/MyDrive/AMLproject/output_subtask_1.npy"
 GRAPH_DIR           = "/content/drive/MyDrive/AMLproject/task_graphs"
 CSV_PATH            = "/content/drive/MyDrive/AMLproject/activity_idx_step_idx.csv"
 OUTPUT_DIR          = "/content/drive/MyDrive/AMLproject/graph_realizations_2"
+EGOVLP_CKPT         = "/content/drive/MyDrive/AMLproject/pretrained/EgoVLP_PT_BEST.pth"
 
 # EgoVLP repo path (so we can import FrozenInTime)
 # Example:
@@ -81,7 +82,7 @@ id_to_recipe = (
 from EgoVLP.model.model import FrozenInTime 
 # from EgoVLP.base.base_model import BaseModel (in model.py)
 
-# NOTE: We are using DistilBERT because FrozenInTime (EgoVLP) supports it.
+# NOTE: We are using DistilBERT because FrozenInTime (EgoVLP) supports it
 text_params = {
     "model": "distilbert-base-uncased",
     "pretrained": True,
@@ -90,7 +91,8 @@ text_params = {
 # Create model: only text branch is used here
 model = FrozenInTime(
     text_params=text_params,
-    projection_dim=256
+    target_dim=1792,
+    load_checkpoint=EGOVLP_CKPT
 ).to(DEVICE)
 
 model.eval()
@@ -101,7 +103,7 @@ tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
 def encode_text(texts):
     """
     Encode a list of strings (node step descriptions) into EgoVLP-aligned embeddings.
-    Returns: torch.Tensor of shape (N, 256), L2-normalized.
+    Returns: torch.Tensor of shape (N, 1792), L2-normalized.
     """
     enc = tokenizer(
         texts,
@@ -110,7 +112,7 @@ def encode_text(texts):
         return_tensors="pt"
     )
     enc = {k: v.to(DEVICE) for k, v in enc.items()}
-    feats = model.compute_text(enc)     # (N, 256)
+    feats = model.compute_text(enc)     # (N, 1792)
     feats = F.normalize(feats, dim=1)   # cosine space
     return feats
 
@@ -121,23 +123,20 @@ def encode_text(texts):
 class NodeFusion(nn.Module):
     """
     Fuse a node text embedding with a matched visual step embedding.
-    Input:  text_feat  (256,)
-            visual_feat (256,)
-    Output: fused node_feat (256,)
+    Input:  text_feat   (1792,)
+            visual_feat (1792,)
+    Output: fused node_feat (1792,)
     """
-    def __init__(self, dim=256):
+    def __init__(self, dim=1792):
         super().__init__()
-        self.proj = nn.Sequential(
-            nn.Linear(2 * dim, dim),
-            nn.ReLU(),
-            nn.Linear(dim, dim)
-        )
+        # keep it simple; avoid ReLU to preserve cosine geometry
+        self.proj = nn.Linear(2 * dim, dim)
 
     def forward(self, text_feat, visual_feat):
         x = torch.cat([text_feat, visual_feat], dim=-1)
         return self.proj(x)
 
-fusion = NodeFusion(256).to(DEVICE)
+fusion = NodeFusion(1792).to(DEVICE)
 fusion.eval()
 
 # ------------------------------------------------------------
@@ -163,14 +162,9 @@ for i, (k, v) in enumerate(data.items()):
 # Find the first vector and infer its dimensionality robustly
 _first_key = next(iter(data.keys()))
 VISUAL_DIM = int(np.array(data[_first_key]).shape[0])
-TEXT_DIM   = 256
+TEXT_DIM = 1792
 
 print("\nDetected VISUAL_DIM from file:", VISUAL_DIM)
-
-# Project visual features into EgoVLP text embedding space (256)
-# This is REQUIRED because your visual vectors are 1792-D, not already EgoVLP-aligned.
-visual_proj = nn.Linear(VISUAL_DIM, TEXT_DIM).to(DEVICE)
-visual_proj.eval()
 
 # ------------------------------------------------------------
 # GROUP FEATURES BY VIDEO
@@ -291,9 +285,8 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     # --------------------------------------------------------
     V_np = np.stack(step_feats).astype(np.float32)  # (S, VISUAL_DIM)
 
-    V = torch.from_numpy(V_np).to(DEVICE)           # (S, VISUAL_DIM)
-    V = visual_proj(V)                              # (S, 256)
-    V = F.normalize(V, dim=1)                       # (S, 256)
+    V = torch.from_numpy(V_np).to(DEVICE)           # (S, 1792)
+    V = F.normalize(V, dim=1)                       # (S, 1792)
 
     # --------------------------------------------------------
     # HUNGARIAN MATCHING (1-to-1)
@@ -323,7 +316,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     np.savez(
         out_path,
         # node features aligned with indices 0..N-1
-        node_features=node_features.detach().cpu().numpy(),  # (N, 256)
+        node_features=node_features.detach().cpu().numpy(),  # (N, 1792)
         # edges now use compact indices
         edges=np.array(edges_remapped, dtype=np.int32),
         # text aligned with node_features
