@@ -29,7 +29,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-import networkx as nx
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -287,53 +287,14 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     V = F.normalize(V, dim=1)                       # (S, 1792)
 
     # --------------------------------------------------------
-    # TEMPORALLY + TOPOLOGICALLY CONSTRAINED HUNGARIAN MATCHING
+    # HUNGARIAN MATCHING (1-to-1)
+    # sim: (S, N)
+    # Hungarian solves min cost, so we use cost = -sim (maximize sim)
     # --------------------------------------------------------
+    sim  = V @ T.T                                   # (S, N)
+    cost = -sim.detach().cpu().numpy()               # (S, N)
 
-    # ---- 1) reorder visual steps by time ----
-    times = np.array(video_to_times[video_id], dtype=object)
-    starts = np.array([t[0] for t in times], dtype=np.float32)
-
-    order_steps = np.argsort(starts)
-    V_ord = V[order_steps]          # (S, 1792)
-
-    # ---- 2) build DAG and get topological order ----
-    G = nx.DiGraph()
-    G.add_nodes_from(range(num_nodes))
-    G.add_edges_from(edges_remapped)
-
-    node_order = list(nx.topological_sort(G))
-    T_ord = T[node_order]           # (N, 1792)
-
-    # ---- 3) similarity + base cost ----
-    sim  = V_ord @ T_ord.T
-    cost = -sim.detach().cpu().numpy()
-
-    # ---- 4) diagonal (time/order) penalty ----
-    S, N = cost.shape
-    ii = np.arange(S)[:, None] / max(S - 1, 1)
-    jj = np.arange(N)[None, :] / max(N - 1, 1)
-
-    lambda_time = 0.8   # ⭐ buon valore iniziale
-    time_penalty = (ii - jj) ** 2
-
-    cost = cost + lambda_time * time_penalty
-
-    # ---- 5) Hungarian ----
-    row_ind, col_ind = linear_sum_assignment(cost)
-
-    # ---- 6) map indices back to ORIGINAL indexing ----
-    row_ind = order_steps[row_ind]
-    col_ind = np.array([node_order[c] for c in col_ind], dtype=np.int32)
-
-    matched_pairs = np.stack([row_ind, col_ind], axis=1)
-
-    pairs_sorted = matched_pairs[np.argsort(matched_pairs[:, 0])]
-    node_seq = pairs_sorted[:, 1]
-    violations = np.sum(np.diff(node_seq) < 0)
-
-    print(f"[DEBUG] Order violations: {violations} / {len(node_seq)}")
-
+    row_ind, col_ind = linear_sum_assignment(cost)   # pairs: (visual_step_idx, node_idx)
 
     # --------------------------------------------------------
     # FUSE MATCHED NODES
@@ -342,7 +303,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     # --------------------------------------------------------
     node_features = T.clone()
 
-    for r, c in matched_pairs:
+    for r, c in zip(row_ind, col_ind):
         node_features[c] = fusion(T[c], V[r])
 
     # --------------------------------------------------------
@@ -359,7 +320,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
         # text aligned with node_features
         node_texts=np.array(node_texts, dtype=object),
         # hungarian output already uses compact indices (OK)
-        matched_pairs=matched_pairs,
+        matched_pairs=np.array(list(zip(row_ind, col_ind)), dtype=np.int32),
         # optional but useful
         step_times=np.array(video_to_times[video_id], dtype=object),
         # DEBUG 
