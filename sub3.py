@@ -307,7 +307,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     current_cluster = [0]
 
     # cosine similarity threshold (EgoVLP works well with 0.85–0.9)
-    CLUSTER_SIM_THRESHOLD = 0.88
+    CLUSTER_SIM_THRESHOLD = 0.90
 
     for i in range(1, V_sorted.shape[0]):
         sim = torch.dot(V_sorted[i - 1], V_sorted[i]).item()
@@ -336,6 +336,12 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     times = np.array(pseudo_times, dtype=object)
 
     S = V.shape[0]
+
+    print(
+        f"[INFO] Video {video_id}: "
+        f"{len(step_feats)} windows → {S} pseudo-steps "
+        f"(graph nodes: {num_nodes})"
+    )
 
     starts = np.array([t[0] for t in times], dtype=np.float32)
     order_steps = np.argsort(starts)
