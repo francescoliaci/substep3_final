@@ -294,6 +294,50 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     times = np.array(video_to_times[video_id], dtype=object)
     starts = np.array([t[0] for t in times], dtype=np.float32)
 
+    # --------------------------------------------------------
+    # TEMPORAL CLUSTERING OF SLIDING WINDOWS → PSEUDO-STEPS
+    # --------------------------------------------------------
+
+    # ensure temporal order
+    order = np.argsort(starts)
+    V_sorted = V[order]
+    times_sorted = times[order]
+
+    clusters = []
+    current_cluster = [0]
+
+    # cosine similarity threshold (EgoVLP works well with 0.85–0.9)
+    CLUSTER_SIM_THRESHOLD = 0.88
+
+    for i in range(1, V_sorted.shape[0]):
+        sim = torch.dot(V_sorted[i - 1], V_sorted[i]).item()
+        if sim >= CLUSTER_SIM_THRESHOLD:
+            current_cluster.append(i)
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [i]
+
+    clusters.append(current_cluster)
+
+    # build pseudo-steps
+    pseudo_feats = []
+    pseudo_times = []
+
+    for c in clusters:
+        feats = V_sorted[c]
+        pseudo_feats.append(feats.mean(dim=0))
+
+        start_t = times_sorted[c[0]][0]
+        end_t   = times_sorted[c[-1]][1]
+        pseudo_times.append((start_t, end_t))
+
+    V = torch.stack(pseudo_feats, dim=0)          # (K, 1792)
+    V = F.normalize(V, dim=1)
+    times = np.array(pseudo_times, dtype=object)
+
+    S = V.shape[0]
+
+    starts = np.array([t[0] for t in times], dtype=np.float32)
     order_steps = np.argsort(starts)
     V_ord = V[order_steps]          # (S, 1792)
 
@@ -314,7 +358,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     ii = np.arange(S)[:, None] / max(S - 1, 1)
     jj = np.arange(N)[None, :] / max(N - 1, 1)
 
-    lambda_time = 0.8   # ⭐ buon valore iniziale
+    lambda_time = 3.0   
     time_penalty = (ii - jj) ** 2
 
     cost = cost + lambda_time * time_penalty
@@ -361,7 +405,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
         # hungarian output already uses compact indices (OK)
         matched_pairs=matched_pairs,
         # optional but useful
-        step_times=np.array(video_to_times[video_id], dtype=object),
+        step_times=times,
         # DEBUG 
         original_node_ids=np.array(node_ids_int, dtype=np.int32)
     )   
