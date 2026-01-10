@@ -307,7 +307,7 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     current_cluster = [0]
 
     # cosine similarity threshold (EgoVLP works well with 0.85–0.9)
-    CLUSTER_SIM_THRESHOLD = 0.90
+    CLUSTER_SIM_THRESHOLD = 0.94
 
     for i in range(1, V_sorted.shape[0]):
         sim = torch.dot(V_sorted[i - 1], V_sorted[i]).item()
@@ -318,6 +318,24 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
             current_cluster = [i]
 
     clusters.append(current_cluster)
+
+    # --------------------------------------------------------
+    # FORCE REASONABLE NUMBER OF PSEUDO-STEPS
+    # --------------------------------------------------------
+
+    MAX_RATIO = 2.0  # allow at most 2× the number of graph nodes
+
+    while len(clusters) > MAX_RATIO * num_nodes:
+        merged = []
+        i = 0
+        while i < len(clusters):
+            if i < len(clusters) - 1:
+                merged.append(clusters[i] + clusters[i + 1])
+                i += 2
+            else:
+                merged.append(clusters[i])
+                i += 1
+        clusters = merged
 
     # build pseudo-steps
     pseudo_feats = []
