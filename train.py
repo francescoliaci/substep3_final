@@ -291,7 +291,11 @@ def train_visual_projection(
     TEXT_DIM = 256
 
     visual_proj = nn.Linear(VISUAL_DIM, TEXT_DIM).to(device)
-    opt = torch.optim.Adam(visual_proj.parameters(), lr=lr)
+    fusion = NodeFusion(TEXT_DIM).to(device)
+    opt = torch.optim.Adam(
+        list(visual_proj.parameters()) + list(fusion.parameters()),
+        lr=lr
+    )
 
     visual_proj.train()
 
@@ -361,9 +365,11 @@ def train_visual_projection(
             T_ord = T[node_order][:M]          # (M,256)
 
             # similarity (M,M)
-            S = V_ord @ T_ord.T
-
+            # fuse visual + text (diagonal pairing assumption during training)
+            Fused = fusion(T_ord, V_ord)          # (M, 256)
+            Fused = F.normalize(Fused, dim=1)
             targets = torch.arange(M, device=device)
+            S = Fused @ T_ord.T                   # similarity to text nodes
             loss = F.cross_entropy(S, targets)
 
             opt.zero_grad()
@@ -376,7 +382,7 @@ def train_visual_projection(
         avg = total_loss / max(n_used, 1)
         print(f"[TRAIN] epoch {ep+1}: avg_loss={avg:.4f} videos_used={n_used}")
 
-    return visual_proj.eval()
+    return visual_proj.eval(), fusion.eval()
 
 
 # -----------------------------
@@ -391,14 +397,13 @@ def match_and_save(
     text_emb_dir: str,
     output_dir: str,
     visual_proj: nn.Module,
+    fusion: nn.Module,
     device: str,
     cluster_sim_threshold: float = 0.94,
     max_ratio: float = 2.0,
     lambda_time: float = 3.0,
 ):
     os.makedirs(output_dir, exist_ok=True)
-
-    fusion = NodeFusion(256).to(device).eval()
 
     saved_count = 0
     skipped_no_recipe = 0
@@ -458,6 +463,23 @@ def match_and_save(
         # Hungarian match
         matched_pairs = hungarian_with_time_and_topology(
             V_pseudo, pseudo_times, T, edges_remapped, lambda_time=lambda_time
+        )
+
+        # ----------------------------------------
+        # ORDER VIOLATION DIAGNOSTIC
+        # ----------------------------------------
+
+        # sort matches by visual (temporal) order
+        pairs_sorted = matched_pairs[np.argsort(matched_pairs[:, 0])]
+
+        node_sequence = pairs_sorted[:, 1]
+
+        # count non-sequential node assignments
+        violations = np.sum(np.diff(node_sequence) < 0)
+
+        print(
+            f"[ORDER CHECK] Video {video_id}: "
+            f"{violations} order violations out of {len(node_sequence)} matches"
         )
 
         # fuse matched nodes
@@ -527,7 +549,7 @@ def main():
     print("Recipes in CSV:", len(id_to_recipe))
 
     if args.mode == "train":
-        visual_proj = train_visual_projection(
+        visual_proj, fusion = train_visual_projection(
             video_to_steps=video_to_steps,
             video_to_times=video_to_times,
             id_to_recipe=id_to_recipe,
@@ -544,7 +566,10 @@ def main():
         if not args.proj_out:
             raise ValueError("--proj_out is required in mode=train")
         os.makedirs(os.path.dirname(args.proj_out) or ".", exist_ok=True)
-        torch.save(visual_proj.state_dict(), args.proj_out)
+        torch.save({
+                "visual_proj": visual_proj.state_dict(),
+                "fusion": fusion.state_dict(),
+            }, args.proj_out)
         print("✅ Saved projection to:", args.proj_out)
 
     elif args.mode == "match":
@@ -553,9 +578,16 @@ def main():
         if not args.proj_in:
             raise ValueError("--proj_in is required in mode=match")
 
+        ckpt = torch.load(args.proj_in, map_location=device)
+
         visual_proj = nn.Linear(1792, 256).to(device)
-        visual_proj.load_state_dict(torch.load(args.proj_in, map_location=device))
+        visual_proj.load_state_dict(ckpt["visual_proj"])
         visual_proj.eval()
+
+        fusion = NodeFusion(256).to(device)
+        fusion.load_state_dict(ckpt["fusion"])
+        fusion.eval()
+
 
         match_and_save(
             video_to_steps=video_to_steps,
