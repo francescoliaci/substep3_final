@@ -212,12 +212,12 @@ for video_id, step_feats in tqdm(video_to_steps.items(), desc="Matching videos")
     # --------------------------------------------------------
     node_emb_path = os.path.join(
         TEXT_EMB_DIR,
-        f"{recipe_name}_node_embeddings.npy"
+        f"{safe_name}_node_embeddings.npy"
     )
 
     meta_path = os.path.join(
         TEXT_EMB_DIR,
-        f"{recipe_name}_meta.json"
+        f"{safe_name}_meta.json"
     )
 
     if not os.path.exists(node_emb_path):
