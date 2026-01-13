@@ -1,248 +1,110 @@
-import json
+# clustering.py
+import os
 import numpy as np
-import pandas as pd
-from pathlib import Path
+import torch
+import torch.nn.functional as F
 from collections import defaultdict
-from sklearn.preprocessing import normalize
-from sklearn.metrics.pairwise import cosine_distances
+from tqdm import tqdm
 
-# ============================================================
-# PATHS (LOCAL)
-# ============================================================
+# -----------------------------
+# CONFIG
+# -----------------------------
+INPUT_NPY = "output_subtask_1.npy"
+OUT_DIR = "step_embeddings"
 
-INPUT_FEATURES = "output_subtask_1.npy"
-GRAPH_DIR     = Path("task_graphs")
-CSV_PATH      = "activity_idx_step_idx.csv"
-OUTPUT_DIR    = Path("video_embeddings")
+CLUSTER_SIM_THRESHOLD = 0.94
+MAX_RATIO = 2.0 
 
-# hyperparameters
-FINE_THRESHOLD = 0.15
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+os.makedirs(OUT_DIR, exist_ok=True)
 
-OUTPUT_DIR.mkdir(exist_ok=True)
+# -----------------------------
+# LOAD WINDOW FEATURES
+# -----------------------------
+data = np.load(INPUT_NPY, allow_pickle=True).item()
 
-# ============================================================
-# LOAD CSV MAPPING: activity_idx -> activity_name
-# ============================================================
+video_to_feats = defaultdict(list)
+video_to_times = defaultdict(list)
 
-df = pd.read_csv(CSV_PATH)
+for key, feat in data.items():
+    parts = key.split("_")
+    if len(parts) < 3:
+        continue
 
-id_to_recipe = (
-    df[["activity_idx", "activity_name"]]
-    .drop_duplicates()
-    .set_index("activity_idx")["activity_name"]
-    .to_dict()
-)
+    video_id = "_".join(parts[:-2])
 
-# ============================================================
-# UTILS
-# ============================================================
+    try:
+        start = float(parts[-2])
+        end = float(parts[-1])
+    except:
+        continue
 
-def parse_key(k: str):
-    """
-    '9_4_360p_211.20_216.00'
-      -> recipe_id='9'
-      -> video_id='4'
-      -> start, end
-    """
-    parts = k.split("_")
-    recipe_id = parts[0]
-    video_id  = parts[1]
-    start = float(parts[-2])
-    end   = float(parts[-1])
-    return recipe_id, video_id, start, end
+    video_to_feats[video_id].append(feat)
+    video_to_times[video_id].append((start, end))
 
+print(f"🎥 Found {len(video_to_feats)} videos")
 
-def load_features(path):
-    return np.load(path, allow_pickle=True).item()
+# -----------------------------
+# CLUSTER PER VIDEO
+# -----------------------------
+for video_id in tqdm(video_to_feats, desc="Clustering videos"):
 
+    feats = np.stack(video_to_feats[video_id]).astype(np.float32)
+    times = np.array(video_to_times[video_id], dtype=object)
 
-def group_by_recipe_video(data):
-    groups = defaultdict(list)
+    if len(feats) == 0:
+        continue
 
-    for k, feat in data.items():
-        recipe_id, video_id, start, end = parse_key(k)
-        rv_id = f"{recipe_id}_{video_id}"
-        groups[rv_id].append((start, end, k, feat))
+    # sort by start time
+    starts = np.array([t[0] for t in times], dtype=np.float32)
+    order = np.argsort(starts)
 
-    for rv_id in groups:
-        groups[rv_id].sort(key=lambda x: x[0])
+    feats = torch.from_numpy(feats[order]).to(DEVICE)
+    feats = F.normalize(feats, dim=1)
+    times = times[order]
 
-    return groups
-
-
-def get_task_graph(recipe_id: int):
-    """
-    Returns (graph_json, safe_name) or (None, None)
-    """
-    if recipe_id not in id_to_recipe:
-        return None, None
-
-    recipe_name = id_to_recipe[recipe_id]
-    safe_name = recipe_name.lower().replace(" ", "")
-    graph_path = GRAPH_DIR / f"{safe_name}.json"
-
-    if not graph_path.exists():
-        return None, None
-
-    with open(graph_path, "r", encoding="utf-8") as f:
-        graph = json.load(f)
-
-    return graph, safe_name
-
-
-# ============================================================
-# STEP 1 — FINE TEMPORAL SEGMENTATION
-# ============================================================
-
-def temporal_clustering(windows, threshold):
-    """
-    Merge ONLY consecutive windows if cosine distance is small
-    """
-    if len(windows) == 1:
-        return [windows]
-
-    feats = normalize(np.stack([w[3] for w in windows]))
-
+    # ---- clustering ----
     clusters = []
-    current = [windows[0]]
+    current = [0]
 
-    for i in range(1, len(windows)):
-        d = cosine_distances(
-            feats[i - 1][None],
-            feats[i][None]
-        )[0, 0]
-
-        if d < threshold:
-            current.append(windows[i])
+    for i in range(1, feats.shape[0]):
+        sim = torch.dot(feats[i - 1], feats[i]).item()
+        if sim >= CLUSTER_SIM_THRESHOLD:
+            current.append(i)
         else:
             clusters.append(current)
-            current = [windows[i]]
-
+            current = [i]
     clusters.append(current)
-    return clusters
 
+    # ---- merge if too many ----
+    while len(clusters) > MAX_RATIO * len(clusters):
+        merged = []
+        i = 0
+        while i < len(clusters):
+            if i < len(clusters) - 1:
+                merged.append(clusters[i] + clusters[i + 1])
+                i += 2
+            else:
+                merged.append(clusters[i])
+                i += 1
+        clusters = merged
 
-# ============================================================
-# STEP 2 — MERGE TO TARGET (INCLUDING START + END)
-# ============================================================
-
-def cluster_embedding(cluster):
-    feats = np.stack([w[3] for w in cluster])
-    return feats.mean(axis=0)
-
-
-def reduce_clusters_to_target(clusters, target_steps):
-    """
-    Merge most similar ADJACENT clusters until target reached
-    """
-    if len(clusters) <= target_steps:
-        return clusters
-
-    clusters = list(clusters)
-
-    while len(clusters) > target_steps:
-        embs = normalize(
-            np.stack([cluster_embedding(c) for c in clusters])
-        )
-
-        dists = [
-            cosine_distances(
-                embs[i][None],
-                embs[i + 1][None]
-            )[0, 0]
-            for i in range(len(embs) - 1)
-        ]
-
-        i = int(np.argmin(dists))
-        merged = clusters[i] + clusters[i + 1]
-        clusters = clusters[:i] + [merged] + clusters[i + 2:]
-
-    return clusters
-
-
-# ============================================================
-# SAVE
-# ============================================================
-
-def save_recipe_video(rv_id, clusters):
-    step_embeddings = []
-    step_intervals  = []
-    window_keys     = []
+    # ---- build pseudo-steps ----
+    step_feats = []
+    step_times = []
 
     for c in clusters:
-        feats = np.stack([w[3] for w in c])
-        step_embeddings.append(feats.mean(axis=0))
-        step_intervals.append([c[0][0], c[-1][1]])
-        window_keys.append([w[2] for w in c])
+        step_feats.append(feats[c].mean(dim=0).cpu().numpy())
+        step_times.append((times[c[0]][0], times[c[-1]][1]))
 
-    step_embeddings = np.stack(step_embeddings)
-    step_intervals  = np.array(step_intervals, dtype=np.float32)
+    step_feats = np.stack(step_feats)
+    step_times = np.array(step_times, dtype=object)
 
-    out_path = OUTPUT_DIR / f"{rv_id}_360p_steps.npz"
-    np.savez(
-        out_path,
-        step_embeddings=step_embeddings,
-        step_intervals=step_intervals,
-        window_keys=np.array(window_keys, dtype=object),
-    )
+    # ---- save ----
+    out_video_dir = os.path.join(OUT_DIR, video_id)
+    os.makedirs(out_video_dir, exist_ok=True)
 
+    np.save(os.path.join(out_video_dir, "steps.npy"), step_feats)
+    np.save(os.path.join(out_video_dir, "times.npy"), step_times)
 
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-    data = load_features(INPUT_FEATURES)
-    groups = group_by_recipe_video(data)
-
-    print(f"Loaded {len(data)} sliding windows")
-    print(f"Found {len(groups)} recipe_videos\n")
-
-    for rv_id, windows in groups.items():
-        recipe_id = int(rv_id.split("_")[0])
-
-        graph, _ = get_task_graph(recipe_id)
-        if graph is None:
-            print(f"[WARN] Missing task graph for recipe {recipe_id}")
-            continue
-
-        # total nodes INCLUDING START + END
-        target_steps = len(graph["steps"])
-
-        # --------------------------------------------------
-        # Step 1: fine temporal segmentation
-        # --------------------------------------------------
-        fine_clusters = temporal_clustering(
-            windows,
-            threshold=FINE_THRESHOLD
-        )
-
-        # --------------------------------------------------
-        # Step 2: merge to EXACT number of graph nodes
-        # --------------------------------------------------
-        clusters = reduce_clusters_to_target(
-            fine_clusters,
-            target_steps=target_steps
-        )
-
-        # --------------------------------------------------
-        # Add START / END anchors if missing
-        # --------------------------------------------------
-        if len(clusters) == target_steps - 2:
-            clusters = (
-                [[windows[0]]] +
-                clusters +
-                [[windows[-1]]]
-            )
-
-        print("=" * 80)
-        print(f"Recipe-Video: {rv_id}")
-        print(f"Original windows: {len(windows)}")
-        print(f"Graph nodes (incl. START/END): {target_steps}")
-        print(f"Final clustered steps: {len(clusters)}")
-
-        save_recipe_video(rv_id, clusters)
-
-
-if __name__ == "__main__":
-    main()
+print("✅ Clustering completed.")
