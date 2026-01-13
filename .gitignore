@@ -23,13 +23,9 @@ ENV/
 # =========================
 features_output/
 step_embeddings/
+text_embeddings/
+video_embeddings/
 graph_realizations/
-graph_realizations_2/
-graph_realizations_3/
-graph_realizations_4/
-graph_realizations_5/
-graph_realizations_8/
-actionformer/
 
 # =========================
 # Dataset files

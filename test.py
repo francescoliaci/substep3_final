@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # ============================================================
 # PATH: MODIFICA QUI
 # ============================================================
-GRAPH_PATH = "./graph_realizations_8/1_7_360p_graph.npz"
+GRAPH_PATH = "./graph_realizations/1_7_360p_graph.npz"
 
 # ============================================================
 # LOAD GRAPH
