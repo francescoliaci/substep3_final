@@ -13,7 +13,7 @@ INPUT_NPY = "output_subtask_1.npy"
 OUT_DIR = "step_embeddings"
 
 CLUSTER_SIM_THRESHOLD = 0.94
-MAX_RATIO = 2.0 
+MAX_RATIO = 2.0
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -55,7 +55,7 @@ for video_id in tqdm(video_to_feats, desc="Clustering videos"):
     if len(feats) == 0:
         continue
 
-    # sort by start time
+    # ---- sort by time ----
     starts = np.array([t[0] for t in times], dtype=np.float32)
     order = np.argsort(starts)
 
@@ -63,7 +63,7 @@ for video_id in tqdm(video_to_feats, desc="Clustering videos"):
     feats = F.normalize(feats, dim=1)
     times = times[order]
 
-    # ---- clustering ----
+    # ---- temporal clustering ----
     clusters = []
     current = [0]
 
@@ -76,7 +76,7 @@ for video_id in tqdm(video_to_feats, desc="Clustering videos"):
             current = [i]
     clusters.append(current)
 
-    # ---- merge if too many ----
+    # ---- merge if too many clusters ----
     while len(clusters) > MAX_RATIO * len(clusters):
         merged = []
         i = 0
@@ -97,14 +97,17 @@ for video_id in tqdm(video_to_feats, desc="Clustering videos"):
         step_feats.append(feats[c].mean(dim=0).cpu().numpy())
         step_times.append((times[c[0]][0], times[c[-1]][1]))
 
-    step_feats = np.stack(step_feats)
-    step_times = np.array(step_times, dtype=object)
+    step_feats = np.stack(step_feats)              # (K, 1792)
+    step_times = np.array(step_times, dtype=object)  # (K, 2)
 
-    # ---- save ----
-    out_video_dir = os.path.join(OUT_DIR, video_id)
-    os.makedirs(out_video_dir, exist_ok=True)
+    # ---- save SINGLE FILE ----
+    out_path = os.path.join(OUT_DIR, f"{video_id}_steps.npz")
 
-    np.save(os.path.join(out_video_dir, "steps.npy"), step_feats)
-    np.save(os.path.join(out_video_dir, "times.npy"), step_times)
+    np.savez(
+        out_path,
+        video_id=video_id,
+        step_features=step_feats,
+        step_times=step_times
+    )
 
-print("✅ Clustering completed.")
+print("✅ Clustering completed. One file per video saved.")
